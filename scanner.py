@@ -127,14 +127,14 @@ def signal_from(c5,c15,c1h,book,kind,extra=None):
             stop=min(sl if swL else t5["levels"]["support"],ob["low"] if obt=="BULLISH" else t5["levels"]["support"])
             tp1=t5["levels"]["resistance"]; risk=p-stop; rr=(tp1-p)/risk if risk>0 else 0
             if rr>=MIN_RR:
-                return {"signal":"LONG CONFIRMED","entry":p,"stop":stop,"tp1":tp1,"tp2":tp1+2*risk,"rr":rr,
+                return {"price":p,"signal":"LONG CONFIRMED","entry":p,"stop":stop,"tp1":tp1,"tp2":tp1+2*risk,"rr":rr,
                         "structure":t5,"htf":t15,"ob_type":obt,"ob":ob,"sweep":swL,"book":bm,"rel_volume":rv,"why_no_entry":[]}
         if not bull_htf:reasons.append("higher-timeframe bullish context missing")
         if not bull5:reasons.append("5m bullish structure missing")
         if not swL and obt!="BULLISH":reasons.append("liquidity sweep or bullish OB not confirmed")
         if bm["imbalance"]<=0.05:reasons.append("spot order-book demand not confirmed")
         if rv<1.0:reasons.append("relative volume below baseline")
-        return {"signal":"WAIT","structure":t5,"htf":t15,"book":bm,"ob_type":obt,"ob":ob,"sweep":swL,"rel_volume":rv,"why_no_entry":reasons}
+        return {"price":p,"signal":"WAIT","structure":t5,"htf":t15,"book":bm,"ob_type":obt,"ob":ob,"sweep":swL,"rel_volume":rv,"why_no_entry":reasons}
     e=extra or {}
     flow=e.get("taker_flow",0.0); oi_delta=e.get("oi_delta",0.0); funding=e.get("funding",0.0); basis=e.get("basis",0.0)
     long_top=e.get("top_long_ratio",1.0)
@@ -145,7 +145,7 @@ def signal_from(c5,c15,c1h,book,kind,extra=None):
     if bear_htf and bear5 and (swS or obt=="BEARISH") and bm["imbalance"]<-0.05 and flow<-0.05 and rv>=1.0:
         stop=max(sh if swS else t5["levels"]["resistance"],ob["high"] if obt=="BEARISH" else t5["levels"]["resistance"])
         tp1=t5["levels"]["support"]; risk=stop-p; rr=(p-tp1)/risk if risk>0 else 0
-        if rr>=MIN_RR:return {"signal":"SHORT CONFIRMED","entry":p,"stop":stop,"tp1":tp1,"tp2":tp1-2*risk,"rr":rr,"structure":t5,"htf":t15,"ob_type":obt,"ob":ob,"sweep":swS,"book":bm,"rel_volume":rv,"flow":flow,"oi_delta":oi_delta,"funding":funding,"basis":basis,"top_long_ratio":long_top,"why_no_entry":[]}
+        if rr>=MIN_RR:return {"price":p,"signal":"SHORT CONFIRMED","entry":p,"stop":stop,"tp1":tp1,"tp2":tp1-2*risk,"rr":rr,"structure":t5,"htf":t15,"ob_type":obt,"ob":ob,"sweep":swS,"book":bm,"rel_volume":rv,"flow":flow,"oi_delta":oi_delta,"funding":funding,"basis":basis,"top_long_ratio":long_top,"why_no_entry":[]}
     if not bull_htf and not bear_htf:reasons.append("higher-timeframe structure neutral")
     if not bull5 and not bear5:reasons.append("5m structure neutral")
     if abs(bm["imbalance"])<=0.05:reasons.append("futures order-book pressure neutral")
@@ -216,39 +216,26 @@ def journal(symbol,market,s):
         c.commit()
     c.close()
 
-def resolve_results(symbol,price_hint=0):
-    # Resolution uses the latest price available in the current Spot/Futures state.
-    for market in ("SPOT","FUTURES"):
-        s=state["spot"].get(symbol) if market=="SPOT" else state["futures"].get(symbol)
-        if not s or "price" not in s:return
+def resolve_results(symbol,market,candles):
+    if not valid(candles) or len(candles)<2:return
+    # Evaluate the last completed candle so results are not based on an unfinished bar.
+    hi=float(candles[-2][2]); lo=float(candles[-2][3])
     c=db()
-    rows=c.execute("SELECT id,direction,entry,stop,tp1,tp2,ts FROM signals WHERE symbol=? AND market=? AND status='OPEN'",(symbol,market)).fetchall()
-    c.close()
+    rows=c.execute("SELECT id,direction,entry,stop,tp1,tp2 FROM signals WHERE symbol=? AND market=? AND status='OPEN'",(symbol,market)).fetchall()
+    for sid,direction,entry,stop,tp1,tp2 in rows:
+        hit_stop = lo<=stop if direction=="LONG" else hi>=stop
+        hit_tp1 = hi>=tp1 if direction=="LONG" else lo<=tp1
+        hit_tp2 = hi>=tp2 if direction=="LONG" else lo<=tp2
+        status=None; r=None
+        if hit_stop and (hit_tp1 or hit_tp2):
+            status="AMBIGUOUS"
+        elif hit_tp2:
+            status="WIN_TP2"; r=(tp2-entry)/abs(entry-stop) if direction=="LONG" else (entry-tp2)/abs(stop-entry)
+        elif hit_tp1:
+            status="WIN_TP1"; r=(tp1-entry)/abs(entry-stop) if direction=="LONG" else (entry-tp1)/abs(stop-entry)
+        elif hit_stop:
+            status="LOSS"; r=-1.0
+        if status:
+            c.execute("UPDATE signals SET status=?,result_ts=?,result_r=? WHERE id=?",(status,int(time.time()),r,sid))
+    c.commit(); c.close()
 
-async def weekly_report(request):
-    c=db()
-    rows=c.execute("SELECT market,direction,status,COUNT(*) FROM signals GROUP BY market,direction,status").fetchall()
-    total=c.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
-    closed=c.execute("SELECT COUNT(*) FROM signals WHERE status!='OPEN'").fetchone()[0]
-    wins=c.execute("SELECT COUNT(*) FROM signals WHERE status='WIN_TP1' OR status='WIN_TP2'").fetchone()[0]
-    report={"version":state["version"],"generated_at":int(time.time()),"total_signals":total,"closed":closed,"wins_tp1_or_tp2":wins,"observed_accuracy":(wins/closed if closed else None),"breakdown":rows}
-    c.close(); return web.json_response(report)
-
-async def health(request): return web.json_response({"ok":state["updated"] is not None,"updated":state["updated"],"symbols":WATCHLIST,"version":state["version"],"last_error":state["last_error"]})
-async def scan(request): return web.json_response(state)
-
-async def poller():
-    timeout=ClientTimeout(total=20)
-    async with ClientSession(timeout=timeout) as session:
-        while True:
-            await asyncio.gather(*(refresh(session,s) for s in WATCHLIST),return_exceptions=True)
-            state["updated"]=int(time.time())
-            await asyncio.sleep(INTERVAL)
-
-async def main():
-    db().close()
-    app=web.Application(); app.router.add_get("/health",health); app.router.add_get("/scan",scan); app.router.add_get("/weekly-report",weekly_report)
-    runner=web.AppRunner(app); await runner.setup(); site=web.TCPSite(runner,"0.0.0.0",PORT); await site.start()
-    await poller()
-
-if __name__=="__main__": asyncio.run(main())
