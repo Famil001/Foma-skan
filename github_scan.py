@@ -22,6 +22,32 @@ async def telegram_send(session, text):
         scanner.state["last_error"] = f"telegram: {type(e).__name__}: {e}"
         return False
 
+def ensure_notification_table():
+    conn = scanner.db()
+    conn.execute("CREATE TABLE IF NOT EXISTS telegram_notifications(signal_id INTEGER PRIMARY KEY, ts INTEGER)")
+    conn.commit()
+    conn.close()
+
+def notification_needed(symbol, confluence):
+    direction = confluence
+    conn = scanner.db()
+    row = conn.execute(
+        "SELECT id FROM signals WHERE symbol=? AND direction=? AND status='OPEN' ORDER BY id DESC LIMIT 1",
+        (symbol, direction),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
+    seen = conn.execute("SELECT 1 FROM telegram_notifications WHERE signal_id=?", (row[0],)).fetchone()
+    conn.close()
+    return None if seen else row[0]
+
+def mark_notified(signal_id):
+    conn = scanner.db()
+    conn.execute("INSERT OR IGNORE INTO telegram_notifications(signal_id,ts) VALUES(?,?)", (signal_id, int(time.time())))
+    conn.commit()
+    conn.close()
+
 def format_signal(symbol, confluence, sp, fu):
     side = "LONG" if confluence == "LONG" else "SHORT"
     s = fu if fu.get("signal", "").startswith(side) else sp
@@ -58,12 +84,16 @@ async def run_once():
 
     closed, proposals, errors, _ = main.learn_cycle()
 
+    ensure_notification_table()
     for symbol in scanner.WATCHLIST:
         confluence = scanner.state["confluence"].get(symbol, "NO ENTRY")
         if confluence in ("LONG", "SHORT"):
-            sp = scanner.state["spot"].get(symbol, {})
-            fu = scanner.state["futures"].get(symbol, {})
-            await telegram_send(session, format_signal(symbol, confluence, sp, fu))
+            signal_id = notification_needed(symbol, confluence)
+            if signal_id:
+                sp = scanner.state["spot"].get(symbol, {})
+                fu = scanner.state["futures"].get(symbol, {})
+                if await telegram_send(session, format_signal(symbol, confluence, sp, fu)):
+                    mark_notified(signal_id)
 
     diagnostics = {}
     for symbol in scanner.WATCHLIST:
