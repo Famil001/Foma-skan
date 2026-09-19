@@ -10,6 +10,63 @@ PORT=scanner.PORT
 SPOT_REST=scanner.SPOT_REST
 FUT_REST=scanner.FUT_REST
 
+def telegram_credentials():
+    return (
+        os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAMBOTTOKEN"),
+        os.getenv("TELEGRAM_CHAT_ID") or os.getenv("TELEGRAMCHATID"),
+    )
+
+async def telegram_send(session, text):
+    token, chat_id = telegram_credentials()
+    if not token or not chat_id:
+        return False
+    try:
+        async with session.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
+        ) as r:
+            return r.status == 200
+    except Exception as e:
+        scanner.state["last_error"] = f"telegram: {type(e).__name__}: {e}"
+        return False
+
+def ensure_notification_table():
+    c=scanner.db()
+    c.execute("CREATE TABLE IF NOT EXISTS telegram_notifications(signal_id INTEGER PRIMARY KEY, ts INTEGER)")
+    c.commit(); c.close()
+
+def notify_signal_id(symbol, confluence):
+    c=scanner.db()
+    row=c.execute(
+        "SELECT id FROM signals WHERE symbol=? AND direction=? AND status='OPEN' ORDER BY id DESC LIMIT 1",
+        (symbol,confluence)
+    ).fetchone()
+    if not row:
+        c.close(); return None
+    seen=c.execute("SELECT 1 FROM telegram_notifications WHERE signal_id=?",(row[0],)).fetchone()
+    c.close()
+    return None if seen else row[0]
+
+def mark_notified(signal_id):
+    c=scanner.db()
+    c.execute("INSERT OR IGNORE INTO telegram_notifications(signal_id,ts) VALUES(?,?)",(signal_id,int(time.time())))
+    c.commit(); c.close()
+
+def signal_text(symbol, confluence, sp, fu):
+    side="LONG" if confluence=="LONG" else "SHORT"
+    s=fu if fu.get("signal","").startswith(side) else sp
+    return (
+        f"Famil Scanner | {symbol} | {side}\n"
+        f"Time: {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}\n"
+        f"Confluence: {confluence}\n"
+        f"Entry: {s.get('entry','n/a')}\n"
+        f"Stop: {s.get('stop','n/a')}\n"
+        f"TP1: {s.get('tp1','n/a')}\n"
+        f"TP2: {s.get('tp2','n/a')}\n"
+        f"RR: {s.get('rr','n/a')}\n"
+        f"Strategy: {scanner.state.get('version','1.0')}"
+    )
+
 TAXONOMY=[
  "FALSE_SWEEP","BAD_OB","WEAK_VOLUME","ORDER_BOOK_TRAP","OI_CONFLICT",
  "FUNDING_CONFLICT","LIQUIDITY_TARGET_TOO_CLOSE","STRUCTURE_BREAK",
@@ -131,6 +188,16 @@ async def cycle():
               "futures_close_ts":fc[-2][0] if scanner.valid(fc) and len(fc)>=2 else None
             }))
     closed,proposals,_,_=learn_cycle()
+    ensure_notification_table()
+    for symbol in WATCHLIST:
+        confluence=scanner.state["confluence"].get(symbol,"NO ENTRY")
+        if confluence in ("LONG","SHORT"):
+            signal_id=notify_signal_id(symbol,confluence)
+            if signal_id:
+                sp=scanner.state["spot"].get(symbol,{})
+                fu=scanner.state["futures"].get(symbol,{})
+                if await telegram_send(session,signal_text(symbol,confluence,sp,fu)):
+                    mark_notified(signal_id)
     scanner.state["updated"]=int(time.time())
     return closed,proposals
 
@@ -138,13 +205,15 @@ async def health(request):
     return web.json_response({
       "status":"ok","scanner":"running","uptime":int(time.time()-STARTED),
       "version":scanner.state["version"],"learning":"evidence_only",
-      "updated":scanner.state["updated"],"last_error":scanner.state["last_error"]
+      "updated":scanner.state["updated"],"last_error":scanner.state["last_error"],
+      "data_health":scanner.state.get("data_health",{})
     })
 
 async def state_report(request):
     return web.json_response({
       "version":scanner.state["version"],"updated":scanner.state["updated"],
       "last_error":scanner.state["last_error"],"confluence":scanner.state["confluence"],
+      "data_health":scanner.state.get("data_health",{}),
       "spot":scanner.state["spot"],"futures":scanner.state["futures"]
     })
 
