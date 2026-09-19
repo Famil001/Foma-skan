@@ -11,7 +11,7 @@ SPOT_REST="https://api.binance.com"
 FUT_REST="https://fapi.binance.com"
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s")
-state={"spot":{},"futures":{},"confluence":{},"updated":None,"last_error":None,"version":"1.0"}
+state={"spot":{},"futures":{},"confluence":{},"updated":None,"last_error":None,"version":"1.0","data_health":{}}
 
 def db():
     os.makedirs(os.path.dirname(DB_PATH) or ".",exist_ok=True)
