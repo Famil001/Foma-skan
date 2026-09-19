@@ -238,4 +238,17 @@ def resolve_results(symbol,market,candles):
         if status:
             c.execute("UPDATE signals SET status=?,result_ts=?,result_r=? WHERE id=?",(status,int(time.time()),r,sid))
     c.commit(); c.close()
+async def weekly_report(request):
+    since=int(time.time())-7*24*3600
+    c=db()
+    rows=c.execute("SELECT market,direction,status,COUNT(*) FROM signals WHERE ts>=? GROUP BY market,direction,status",(since,)).fetchall()
+    total=c.execute("SELECT COUNT(*) FROM signals WHERE ts>=?",(since,)).fetchone()[0]
+    closed=c.execute("SELECT COUNT(*) FROM signals WHERE ts>=? AND status NOT IN ('OPEN','AMBIGUOUS')",(since,)).fetchone()[0]
+    wins=c.execute("SELECT COUNT(*) FROM signals WHERE ts>=? AND status IN ('WIN_TP1','WIN_TP2')",(since,)).fetchone()[0]
+    avg_r=c.execute("SELECT AVG(result_r) FROM signals WHERE ts>=? AND result_r IS NOT NULL",(since,)).fetchone()[0]
+    expectancy=c.execute("SELECT AVG(result_r) FROM signals WHERE ts>=? AND status NOT IN ('OPEN','AMBIGUOUS')",(since,)).fetchone()[0]
+    report={"version":state["version"],"period_days":7,"generated_at":int(time.time()),"total_signals":total,
+            "closed":closed,"wins_tp1_or_tp2":wins,"observed_accuracy":(wins/closed if closed else None),
+            "average_R":avg_r,"expectancy_R":expectancy,"breakdown":rows}
+    c.close(); return web.json_response(report)
 
