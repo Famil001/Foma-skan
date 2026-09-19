@@ -1,0 +1,54 @@
+name: Famil Binance Scanner
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/5 * * * *"
+
+concurrency:
+  group: famil-binance-scanner
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Prepare journal
+        run: mkdir -p data
+
+      - name: Run one scanner cycle
+        env:
+          JOURNAL_DB: ./data/famil_scanner.db
+          SCAN_INTERVAL_SECONDS: "15"
+        run: python github_scan.py
+
+      - name: Persist journal
+        run: |
+          git config user.name "Famil Scanner"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/famil_scanner.db
+          if git diff --cached --quiet; then
+            echo "No journal changes"
+          else
+            git commit -m "scanner: persist journal"
+            git push
+          fi
