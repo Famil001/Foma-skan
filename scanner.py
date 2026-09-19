@@ -194,9 +194,12 @@ async def refresh(session,symbol):
         sp=signal_from(sc,sm,sl,await rest(session,SPOT_REST+"/api/v3/depth",{"symbol":symbol,"limit":100}),"SPOT")
         fu=signal_from(fc,f15,f1h,fb,"FUTURES",extra)
         state["spot"][symbol]=sp; state["futures"][symbol]=fu
-        if sp["signal"]=="LONG CONFIRMED" and fu["signal"]=="LONG CONFIRMED": state["confluence"][symbol]="LONG"
-        elif fu["signal"]=="SHORT CONFIRMED": state["confluence"][symbol]="SHORT"
-        else: state["confluence"][symbol]="NO ENTRY"
+        if sp["signal"]=="LONG CONFIRMED" and fu["signal"]=="LONG CONFIRMED":
+            state["confluence"][symbol]="LONG"
+        elif sp["signal"]=="SHORT CONFIRMED" and fu["signal"]=="SHORT CONFIRMED":
+            state["confluence"][symbol]="SHORT"
+        else:
+            state["confluence"][symbol]="NO ENTRY"
         journal(symbol,"SPOT",sp); journal(symbol,"FUTURES",fu)
     except Exception as e:
         state["last_error"]=f"{symbol}: {type(e).__name__}: {e}"
