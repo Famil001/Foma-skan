@@ -154,11 +154,29 @@ def signal_from(c5,c15,c1h,book,kind,extra=None):
     return {"signal":"WAIT","structure":t5,"htf":t15,"book":bm,"ob_type":obt,"ob":ob,"sweep":swL or swS,"rel_volume":rv,"flow":flow,"oi_delta":oi_delta,"funding":funding,"basis":basis,"top_long_ratio":long_top,"why_no_entry":reasons}
 
 async def rest(session,url,params):
-    try:
-        async with session.get(url,params=params) as r:
-            d=await r.json(content_type=None)
-            return d if r.status==200 else {}
-    except Exception:return {}
+    hosts=[url]
+    if url.startswith("https://api.binance.com"):
+        suffix=url[len("https://api.binance.com"):]
+        hosts=[
+            "https://api.binance.com"+suffix,
+            "https://api1.binance.com"+suffix,
+            "https://api2.binance.com"+suffix,
+            "https://api3.binance.com"+suffix,
+            "https://api4.binance.com"+suffix,
+            "https://api-gcp.binance.com"+suffix
+        ]
+    last_error=None
+    for host in hosts:
+        try:
+            async with session.get(host,params=params) as r:
+                d=await r.json(content_type=None)
+                if r.status==200:
+                    return d
+                last_error={"status":r.status,"url":host,"body":d}
+        except Exception as e:
+            last_error={"status":None,"url":host,"error":f"{type(e).__name__}: {e}"}
+    state["last_error"]=f"Binance data request failed: {last_error}"
+    return {}
 
 def flow_from(x):
     if not isinstance(x,list) or not x:return 0.0
@@ -183,6 +201,18 @@ async def refresh(session,symbol):
           rest(session,FUT_REST+"/futures/data/topLongShortPositionRatio",{"symbol":symbol,"period":"5m","limit":1}),
           rest(session,FUT_REST+"/futures/data/takerBuySellVol",{"symbol":symbol,"contractType":"PERPETUAL","period":"5m","limit":3})
         )
+        spot_book=await rest(session,SPOT_REST+"/api/v3/depth",{"symbol":symbol,"limit":100})
+        health={
+            "spot_5m":len(sc) if isinstance(sc,list) else 0,
+            "spot_15m":len(sm) if isinstance(sm,list) else 0,
+            "spot_1h":len(sl) if isinstance(sl,list) else 0,
+            "futures_5m":len(fc) if isinstance(fc,list) else 0,
+            "futures_15m":len(f15) if isinstance(f15,list) else 0,
+            "futures_1h":len(f1h) if isinstance(f1h,list) else 0,
+            "spot_book":len(spot_book.get("bids",[])) if isinstance(spot_book,dict) else 0,
+            "futures_book":len(fb.get("bids",[])) if isinstance(fb,dict) else 0
+        }
+        state["data_health"][symbol]=health
         topd=top[-1] if isinstance(top,list) and top else {}
         funding=float(fr[-1].get("fundingRate",0) or 0) if isinstance(fr,list) and fr else 0
         basisv=float(basis[-1].get("basisRate",basis[-1].get("basis",0)) or 0) if isinstance(basis,list) and basis else 0
@@ -191,7 +221,7 @@ async def refresh(session,symbol):
             a=float(ois[-2].get("sumOpenInterestValue",ois[-2].get("sumOpenInterest",0)) or 0); b=float(ois[-1].get("sumOpenInterestValue",ois[-1].get("sumOpenInterest",0)) or 0)
             oi_delta=(b-a)/a if a else 0
         extra={"taker_flow":flow_from(tak),"oi_delta":oi_delta,"funding":funding,"basis":basisv,"top_long_ratio":float(topd.get("longShortRatio",1) or 1)}
-        sp=signal_from(sc,sm,sl,await rest(session,SPOT_REST+"/api/v3/depth",{"symbol":symbol,"limit":100}),"SPOT")
+        sp=signal_from(sc,sm,sl,spot_book,"SPOT")
         fu=signal_from(fc,f15,f1h,fb,"FUTURES",extra)
         state["spot"][symbol]=sp; state["futures"][symbol]=fu
         if sp["signal"]=="LONG CONFIRMED" and fu["signal"]=="LONG CONFIRMED":
