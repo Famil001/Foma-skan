@@ -2,6 +2,14 @@ name: Famil Binance Scanner
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scanner.py"
+      - "main.py"
+      - "github_scan.py"
+      - "requirements.txt"
+      - ".github/workflows/scanner.yml"
   schedule:
     - cron: "*/5 * * * *"
 
@@ -37,6 +45,8 @@ jobs:
         env:
           JOURNAL_DB: ./data/famil_scanner.db
           SCAN_INTERVAL_SECONDS: "15"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python github_scan.py
 
       - name: Persist journal
