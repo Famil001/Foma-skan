@@ -28,7 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -37,6 +37,11 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Sync with latest main
+        run: |
+          git fetch origin main
+          git reset --hard origin/main
 
       - name: Prepare journal
         run: mkdir -p data
@@ -53,6 +58,15 @@ jobs:
         run: |
           git config user.name "Famil Scanner"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -f data/famil_scanner.db ]; then
+            echo "Journal database was not created"
+            exit 1
+          fi
+          cp data/famil_scanner.db /tmp/famil_scanner.db
+          git fetch origin main
+          git reset --hard origin/main
+          mkdir -p data
+          cp /tmp/famil_scanner.db data/famil_scanner.db
           git add data/famil_scanner.db
           if git diff --cached --quiet; then
             echo "No journal changes"
