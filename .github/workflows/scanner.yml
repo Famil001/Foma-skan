@@ -50,8 +50,8 @@ jobs:
         env:
           JOURNAL_DB: ./data/famil_scanner.db
           SCAN_INTERVAL_SECONDS: "15"
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAMBOTTOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAMCHATID }}
         run: python github_scan.py
 
       - name: Persist journal
