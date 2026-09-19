@@ -12,25 +12,45 @@ async def run_once():
     async with ClientSession(timeout=timeout) as session:
         for symbol in scanner.WATCHLIST:
             await scanner.refresh(session, symbol)
+            # Result evaluation needs a short candle window; use a separate
+            # fetch so the scanner's signal history is not affected.
             for base, market in ((scanner.SPOT_REST, "SPOT"), (scanner.FUT_REST, "FUTURES")):
                 try:
                     path = "/api/v3/klines" if market == "SPOT" else "/fapi/v1/klines"
-                    async with session.get(base + path, params={"symbol": symbol, "interval": "5m", "limit": 3}) as r:
+                    async with session.get(base + path, params={"symbol": symbol, "interval": "5m", "limit": 60}) as r:
                         candles = await r.json(content_type=None)
                     if scanner.valid(candles):
                         scanner.resolve_results(symbol, market, candles)
                 except Exception as e:
                     scanner.state["last_error"] = f"{symbol}/{market}: {type(e).__name__}: {e}"
+
     closed, proposals, errors, _ = main.learn_cycle()
+
+    diagnostics = {}
+    for symbol in scanner.WATCHLIST:
+        sp = scanner.state["spot"].get(symbol, {})
+        fu = scanner.state["futures"].get(symbol, {})
+        diagnostics[symbol] = {
+            "SPOT": sp.get("signal", "NO DATA"),
+            "FUTURES": fu.get("signal", "NO DATA"),
+            "CONFLUENCE": scanner.state["confluence"].get(symbol, "NO ENTRY"),
+            "WHY_NO_ENTRY": {
+                "SPOT": sp.get("why_no_entry", []),
+                "FUTURES": fu.get("why_no_entry", [])
+            }
+        }
+
     print(json.dumps({
         "event": "github_scan_once",
         "ts": int(time.time()),
+        "version": scanner.state.get("version", "1.0"),
         "symbols": scanner.WATCHLIST,
+        "diagnostics": diagnostics,
         "closed": closed,
         "proposals": proposals,
         "errors": errors,
         "last_error": scanner.state["last_error"]
-    }))
-
+    }, ensure_ascii=False))
+    
 if __name__ == "__main__":
     asyncio.run(run_once())
