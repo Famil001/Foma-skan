@@ -198,7 +198,6 @@ async def refresh(session,symbol):
         elif fu["signal"]=="SHORT CONFIRMED": state["confluence"][symbol]="SHORT"
         else: state["confluence"][symbol]="NO ENTRY"
         journal(symbol,"SPOT",sp); journal(symbol,"FUTURES",fu)
-        resolve_results(symbol,float(oi.get("openInterest",0) or 0))
     except Exception as e:
         state["last_error"]=f"{symbol}: {type(e).__name__}: {e}"
         logging.exception("refresh failed for %s",symbol)
