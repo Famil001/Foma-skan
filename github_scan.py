@@ -106,7 +106,8 @@ async def run_once():
             "WHY_NO_ENTRY": {
                 "SPOT": sp.get("why_no_entry", []),
                 "FUTURES": fu.get("why_no_entry", [])
-            }
+            },
+            "DATA_HEALTH": scanner.state.get("data_health", {}).get(symbol, {})
         }
 
     print(json.dumps({
