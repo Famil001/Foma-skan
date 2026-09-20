@@ -95,6 +95,8 @@ async def run_once():
                 if await telegram_send(session, format_signal(symbol, confluence, sp, fu)):
                     mark_notified(signal_id)
 
+    await send_periodic_reports(session)
+
     diagnostics = {}
     for symbol in scanner.WATCHLIST:
         sp = scanner.state["spot"].get(symbol, {})
@@ -124,3 +126,76 @@ async def run_once():
     
 if __name__ == "__main__":
     asyncio.run(run_once())
+
+
+def ensure_report_table():
+    conn = scanner.db()
+    conn.execute("CREATE TABLE IF NOT EXISTS report_log(kind TEXT, period_key TEXT, ts INTEGER, PRIMARY KEY(kind, period_key))")
+    conn.commit()
+    conn.close()
+
+def _report_due(kind, period_key):
+    conn = scanner.db()
+    row = conn.execute("SELECT 1 FROM report_log WHERE kind=? AND period_key=?", (kind, period_key)).fetchone()
+    conn.close()
+    return row is None
+
+def _mark_report(kind, period_key):
+    conn = scanner.db()
+    conn.execute("INSERT OR IGNORE INTO report_log(kind,period_key,ts) VALUES(?,?,?)", (kind, period_key, int(time.time())))
+    conn.commit()
+    conn.close()
+
+def build_period_report(kind, period_key, since_ts):
+    conn = scanner.db()
+    total = conn.execute("SELECT COUNT(*) FROM signals WHERE ts>=?", (since_ts,)).fetchone()[0]
+    wins = conn.execute("SELECT COUNT(*) FROM signals WHERE ts>=? AND status IN ('WIN_TP1','WIN_TP2')", (since_ts,)).fetchone()[0]
+    losses = conn.execute("SELECT COUNT(*) FROM signals WHERE ts>=? AND status='LOSS'", (since_ts,)).fetchone()[0]
+    open_n = conn.execute("SELECT COUNT(*) FROM signals WHERE ts>=? AND status='OPEN'", (since_ts,)).fetchone()[0]
+    top = conn.execute("SELECT symbol, COUNT(*) n FROM signals WHERE ts>=? GROUP BY symbol ORDER BY n DESC LIMIT 5", (since_ts,)).fetchall()
+    conn.close()
+    lines = [
+        f"Famil Scanner — {kind.upper()} REPORT",
+        f"Period: {period_key}",
+        f"Strategy: v{scanner.state.get('version','1.0')}",
+        "",
+        f"Confirmed signals: {total}",
+        f"Wins: {wins}",
+        f"Losses: {losses}",
+        f"Open: {open_n}",
+    ]
+    if top:
+        lines.append("Active symbols: " + ", ".join(f"{s} ({n})" for s,n in top))
+    else:
+        lines.append("Confirmed signals: none in this period.")
+    lines.append("")
+    lines.append("Current confluence:")
+    for symbol in scanner.WATCHLIST:
+        lines.append(f"{symbol}: {scanner.state['confluence'].get(symbol,'NO ENTRY')}")
+    return "\n".join(lines)
+
+async def send_periodic_reports(session):
+    ensure_report_table()
+    try:
+        from zoneinfo import ZoneInfo
+        now = time.time()
+        local = __import__("datetime").datetime.fromtimestamp(now, ZoneInfo("Asia/Tbilisi"))
+        hour_key = local.strftime("%Y-%m-%d-%H")
+        if local.minute < 5 and _report_due("hourly", hour_key):
+            text_report = build_period_report("hourly", hour_key, int(now)-3600)
+            if await telegram_send(session, text_report):
+                _mark_report("hourly", hour_key)
+        if local.hour == 9 and local.minute < 5:
+            day_key = local.strftime("%Y-%m-%d")
+            if _report_due("daily", day_key):
+                text_report = build_period_report("daily", day_key, int(now)-86400)
+                if await telegram_send(session, text_report):
+                    _mark_report("daily", day_key)
+        if local.weekday() == 6 and local.hour == 9 and local.minute < 5:
+            week_key = local.strftime("%Y-W%V")
+            if _report_due("weekly", week_key):
+                text_report = build_period_report("weekly", week_key, int(now)-7*86400)
+                if await telegram_send(session, text_report):
+                    _mark_report("weekly", week_key)
+    except Exception as e:
+        scanner.state["last_error"] = f"report: {type(e).__name__}: {e}"
