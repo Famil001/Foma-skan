@@ -1,0 +1,22 @@
+{
+  "cycle": "live_connector_2026-09-20T03:27:00Z",
+  "strategy_version": "v1.0",
+  "mode": "analysis_only",
+  "data_source": "Binance connected app",
+  "symbols": {
+    "BTCUSDT": {"spot": "WAIT", "futures": "WAIT", "confluence": "NO ENTRY"},
+    "ETHUSDT": {"spot": "WAIT", "futures": "WAIT", "confluence": "NO ENTRY"},
+    "INJUSDT": {"spot": "WAIT", "futures": "WAIT", "confluence": "NO ENTRY"},
+    "SOLUSDT": {"spot": "WAIT", "futures": "WAIT", "confluence": "NO ENTRY"},
+    "AAVEUSDT": {"spot": "WAIT", "futures": "WAIT", "confluence": "NO ENTRY"},
+    "XRPUSDT": {"spot": "WAIT", "futures": "WAIT", "confluence": "NO ENTRY"},
+    "VETUSDT": {"spot": "WAIT", "futures": "WAIT", "confluence": "NO ENTRY"}
+  },
+  "learning_event": {
+    "type": "NO_ENTRY_CYCLE",
+    "confirmed_signals": 0,
+    "reason": "No symbol met the full independent Spot + Futures confirmation requirements."
+  },
+  "telegram": "cycle_report_sent",
+  "runtime_note": "This snapshot is an auditable live-cycle record. The canonical SQLite learning journal remains unchanged until the persistent Singapore runtime is restored."
+}
