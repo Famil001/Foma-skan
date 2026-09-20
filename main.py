@@ -181,25 +181,19 @@ async def cycle():
                 scanner.resolve_results(symbol,"SPOT",sc)
             if scanner.valid(fc):
                 scanner.resolve_results(symbol,"FUTURES",fc)
-            print(json.dumps({
-              "event":"last_closed_candle",
-              "symbol":symbol,
-              "spot_close_ts":sc[-2][0] if scanner.valid(sc) and len(sc)>=2 else None,
-              "futures_close_ts":fc[-2][0] if scanner.valid(fc) and len(fc)>=2 else None
-            }))
-    closed,proposals,_,_=learn_cycle()
-    ensure_notification_table()
-    for symbol in WATCHLIST:
-        confluence=scanner.state["confluence"].get(symbol,"NO ENTRY")
-        if confluence in ("LONG","SHORT"):
-            signal_id=notify_signal_id(symbol,confluence)
-            if signal_id:
-                sp=scanner.state["spot"].get(symbol,{})
-                fu=scanner.state["futures"].get(symbol,{})
-                if await telegram_send(session,signal_text(symbol,confluence,sp,fu)):
-                    mark_notified(signal_id)
-    scanner.state["updated"]=int(time.time())
-    return closed,proposals
+        closed,proposals,_,_=learn_cycle()
+        ensure_notification_table()
+        for symbol in WATCHLIST:
+            confluence=scanner.state["confluence"].get(symbol,"NO ENTRY")
+            if confluence in ("LONG","SHORT"):
+                signal_id=notify_signal_id(symbol,confluence)
+                if signal_id:
+                    sp=scanner.state["spot"].get(symbol,{})
+                    fu=scanner.state["futures"].get(symbol,{})
+                    if await telegram_send(session,signal_text(symbol,confluence,sp,fu)):
+                        mark_notified(signal_id)
+        scanner.state["updated"]=int(time.time())
+        return closed,proposals
 
 async def health(request):
     return web.json_response({
